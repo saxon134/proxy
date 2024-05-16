@@ -150,9 +150,15 @@ func DataExchange(conn1, conn2 net.Conn) {
 	<-ctx.Done()
 }
 
-func GetMD5(s string) [16]byte {
+func MD5(s string) [16]byte {
 	data := []byte(s)
 	has := md5.Sum(data)
 	//return fmt.Sprintf("%x", has), has
 	return has
 }
+
+//func MD5(s string) string {
+//	var data = []byte(s)
+//	var has = md5.Sum(data)
+//	return fmt.Sprintf("%x", has)
+//}

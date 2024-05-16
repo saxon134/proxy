@@ -2,7 +2,6 @@ package main
 
 import (
 	"github.com/saxon134/proxy"
-	"log"
 	"net/http"
 	"time"
 )
@@ -16,9 +15,18 @@ func main() {
 	go http.ListenAndServe(":10311", nil)
 
 	//启动内网穿透
-	proxy.Init()
-
-	log.Printf("APP已启动\n")
+	proxy.Init(proxy.Config{
+		PoolAddr:   "127.0.0.1:7005",
+		RemoteHost: "127.0.0.1:8005",
+		LocalAddr:  "127.0.0.1:10311",
+		Secret:     "x7&6rty",
+	})
+	//proxy.Init(proxy.Config{
+	//	PoolAddr:   "172.16.0.230:7005",
+	//	RemoteHost: "sh02.frp.wcuiqyu.cn",
+	//	LocalAddr:  "127.0.0.1:10311",
+	//	Secret:     "x7&6rty",
+	//})
 
 	for {
 		time.Sleep(time.Second)

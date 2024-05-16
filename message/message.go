@@ -17,9 +17,9 @@ type Message interface {
 
 // ConnInfo 请求建立连接  共21字节
 type ConnInfo struct {
-	Method uint8    // 占1字节
-	Name   [16]byte // 占16 字节
-	ConnId uint32   // 占4字节
+	Name [16]byte // 占16 字节
+	Time [16]byte // 占16 字节
+	Sign [16]byte // 占16 字节
 }
 
 func (c ConnInfo) Write(conn net.Conn) error {
@@ -32,7 +32,7 @@ func (c ConnInfo) Write(conn net.Conn) error {
 }
 
 func (c *ConnInfo) Read(conn net.Conn) error {
-	data := make([]byte, 21)
+	data := make([]byte, 48)
 	n, err := conn.Read(data)
 	if err != nil {
 		return err

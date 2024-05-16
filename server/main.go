@@ -1,12 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/saxon134/proxy/helper"
 	"github.com/saxon134/proxy/message"
-	"log"
 	"net"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 )
 
@@ -16,9 +18,22 @@ type ProxyPool struct {
 	m          sync.Mutex
 }
 
-var ProxyPoolMap = map[[16]byte]*ProxyPool{}
+type Pool struct {
+	sync.RWMutex
+	data map[[16]byte]*net.TCPConn
+}
+
+var pool = Pool{}
+var cfg = struct {
+	Secret     string `json:"secret"`
+	PoolPort   int    `json:"poolPort"`
+	RemotePort int    `json:"remotePort"`
+}{}
 
 func main() {
+
+	//加载配置文件
+	loadConfig()
 
 	//监听客户端连接
 	go listenClient()
@@ -26,18 +41,31 @@ func main() {
 	//监听app请求
 	go listenAppRequest()
 
-	//监听数据通道
-	go listenTunnel()
-
 	//保持程序不退出
 	var wg sync.WaitGroup
 	wg.Add(1)
 	wg.Wait()
 }
 
+func loadConfig() {
+	var bs, err = os.ReadFile("./config.json")
+	if err != nil {
+		panic("配置读取文件失败")
+	}
+
+	err = json.Unmarshal(bs, &cfg)
+	if err != nil {
+		panic(err)
+	}
+
+	if cfg.RemotePort <= 1000 || cfg.PoolPort <= 1000 || cfg.Secret == "" {
+		panic("配置有误")
+	}
+}
+
 // 监听客户端连接
 func listenClient() {
-	var listener, err = helper.CreateListen(":7005")
+	var listener, err = helper.CreateListen(fmt.Sprintf(":%d", cfg.PoolPort))
 	if err != nil {
 		panic(err)
 	}
@@ -46,73 +74,28 @@ func listenClient() {
 	for {
 		var conn, err = listener.AcceptTCP()
 		if err != nil {
-			log.Printf("接收连接失败，错误信息为：%s\n", err.Error())
 			return
 		}
 
 		fmt.Println("Accept Client")
 
-		// 读取请求信息，超时会断开连接
+		// 读取client连接消息
 		var connInfo = new(message.ConnInfo)
 		err = connInfo.Read(conn)
-		if err != nil {
+		var sign = helper.MD5(string(connInfo.Time[:]) + cfg.Secret)
+		if sign != connInfo.Sign {
 			conn.Close()
-			continue
-		}
-
-		//保存映射关系
-		var pool = ProxyPoolMap[connInfo.Name]
-		if pool == nil {
-			pool = &ProxyPool{}
-		} else {
-			if pool.ClientConn != nil {
-				pool.ClientConn.Close()
-			}
-			if pool.TunnelConn != nil {
-				pool.TunnelConn.Close()
-			}
-		}
-		pool.ClientConn = conn
-		ProxyPoolMap[connInfo.Name] = pool
-
-		//保持连接
-		go helper.KeepAlive(conn)
-	}
-}
-
-// 监听通道连接
-func listenTunnel() {
-	var listener, err = helper.CreateListen(":7008")
-	if err != nil {
-		panic(err)
-	}
-
-	for {
-		var conn, err = listener.AcceptTCP()
-		if err != nil {
-			log.Printf("接收连接失败，错误信息为：%s\n", err.Error())
 			return
 		}
 
-		fmt.Println("Accept Tunnel")
-
-		// 读取请求信息
-		var connInfo = new(message.ConnInfo)
-		err = connInfo.Read(conn)
-		if err != nil {
-			conn.Close()
-			continue
-		}
-
 		//保存映射关系
-		var pool = ProxyPoolMap[connInfo.Name]
-		if pool == nil {
-			pool = &ProxyPool{}
-		} else if pool.TunnelConn != nil {
-			pool.TunnelConn.Close()
+		var c = pool.get(connInfo.Name)
+		if c != nil {
+			c.Close()
 		}
-		pool.TunnelConn = conn
-		ProxyPoolMap[connInfo.Name] = pool
+		pool.set(connInfo.Name, conn)
+
+		//保持连接
 		go helper.KeepAlive(conn)
 	}
 }
@@ -120,29 +103,28 @@ func listenTunnel() {
 // 监听app请求
 func listenAppRequest() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		var name = helper.GetMD5(r.Host)
-		var pool = ProxyPoolMap[name]
-		if pool == nil || pool.ClientConn == nil {
-			http.Error(w, "未初始化 ", http.StatusInternalServerError)
+		var host = helper.MD5(r.Host)
+		var client = pool.get(host)
+		if client == nil {
+			http.Error(w, "未连接 ", http.StatusInternalServerError)
 			return
 		}
 
 		var err error
-		if pool.TunnelConn == nil {
-			_, err = pool.ClientConn.Write([]byte("New Connection"))
-			http.Error(w, "未初始化 ", http.StatusInternalServerError)
-			return
-		}
 
 		// 转发HTTP请求到TCP连接
-		if err = r.Write(pool.TunnelConn); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		if err = r.Write(client); err != nil {
+			var msg = err.Error()
+			http.Error(w, msg, http.StatusInternalServerError)
+			if strings.Contains(msg, "broken pipe") || strings.Contains(msg, "EOF") {
+				pool.set(host, nil)
+			}
 			return
 		}
 
 		// 读取TCP响应
 		var buf = make([]byte, 4096)
-		_, err = pool.TunnelConn.Read(buf)
+		_, err = client.Read(buf)
 		if err != nil {
 			http.Error(w, "Err: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -156,5 +138,31 @@ func listenAppRequest() {
 		var c, _, _ = hj.Hijack()
 		_, _ = c.Write(buf)
 	})
-	_ = http.ListenAndServe(":8005", nil)
+	_ = http.ListenAndServe(fmt.Sprintf(":%d", cfg.RemotePort), nil)
+}
+
+func (m *Pool) get(host [16]byte) *net.TCPConn {
+	m.RLock()
+	defer m.RUnlock()
+
+	value, ok := m.data[host]
+	if ok {
+		return value
+	}
+	return nil
+}
+
+func (m *Pool) set(host [16]byte, conn *net.TCPConn) {
+	m.Lock()
+	defer m.Unlock()
+
+	if m.data == nil {
+		m.data = map[[16]byte]*net.TCPConn{}
+	}
+
+	if conn == nil {
+		delete(m.data, host)
+	} else {
+		m.data[host] = conn
+	}
 }
