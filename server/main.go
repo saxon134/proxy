@@ -5,18 +5,14 @@ import (
 	"fmt"
 	"github.com/saxon134/proxy/helper"
 	"github.com/saxon134/proxy/message"
+	"log"
 	"net"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
-
-type ProxyPool struct {
-	ClientConn *net.TCPConn
-	TunnelConn *net.TCPConn
-	m          sync.Mutex
-}
 
 type Pool struct {
 	sync.RWMutex
@@ -41,10 +37,8 @@ func main() {
 	//监听app请求
 	go listenAppRequest()
 
-	//保持程序不退出
-	var wg sync.WaitGroup
-	wg.Add(1)
-	wg.Wait()
+	//防止应用退出
+	<-make(chan bool)
 }
 
 func loadConfig() {
@@ -77,22 +71,19 @@ func listenClient() {
 			return
 		}
 
-		fmt.Println("Accept Client")
-
 		// 读取client连接消息
 		var connInfo = new(message.ConnInfo)
 		err = connInfo.Read(conn)
 		var sign = helper.MD5(string(connInfo.Time[:]) + cfg.Secret)
 		if sign != connInfo.Sign {
+			log.Printf("Client Verify err")
 			conn.Close()
 			return
 		}
 
+		log.Printf("[+] Client Connected")
+
 		//保存映射关系
-		var c = pool.get(connInfo.Name)
-		if c != nil {
-			c.Close()
-		}
 		pool.set(connInfo.Name, conn)
 
 		//保持连接
@@ -106,24 +97,28 @@ func listenAppRequest() {
 		var host = helper.MD5(r.Host)
 		var client = pool.get(host)
 		if client == nil {
-			http.Error(w, "未连接 ", http.StatusInternalServerError)
+			http.Error(w, "No connected local client ", http.StatusInternalServerError)
 			return
 		}
 
 		var err error
 
 		// 转发HTTP请求到TCP连接
-		if err = r.Write(client); err != nil {
+		_ = client.SetWriteDeadline(time.Now().Add(time.Second * 10))
+		err = r.Write(client)
+		if err != nil {
 			var msg = err.Error()
 			http.Error(w, msg, http.StatusInternalServerError)
 			if strings.Contains(msg, "broken pipe") || strings.Contains(msg, "EOF") {
 				pool.set(host, nil)
+				log.Println("[-] Client pipe broken")
 			}
 			return
 		}
 
 		// 读取TCP响应
 		var buf = make([]byte, 4096)
+		_ = client.SetReadDeadline(time.Now().Add(time.Second * 10))
 		_, err = client.Read(buf)
 		if err != nil {
 			http.Error(w, "Err: "+err.Error(), http.StatusInternalServerError)
@@ -136,6 +131,7 @@ func listenAppRequest() {
 			return
 		}
 		var c, _, _ = hj.Hijack()
+		_ = c.SetWriteDeadline(time.Now().Add(time.Second * 2))
 		_, _ = c.Write(buf)
 	})
 	_ = http.ListenAndServe(fmt.Sprintf(":%d", cfg.RemotePort), nil)
@@ -158,6 +154,12 @@ func (m *Pool) set(host [16]byte, conn *net.TCPConn) {
 
 	if m.data == nil {
 		m.data = map[[16]byte]*net.TCPConn{}
+	}
+
+	//已存在则关闭
+	var c = m.data[host]
+	if c != nil {
+		c.Close()
 	}
 
 	if conn == nil {

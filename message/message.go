@@ -6,10 +6,6 @@ import (
 	"net"
 )
 
-const TypeRegister = 1 // 注册请求
-const TypeRequest = 2  // 请求连接
-const TypeResponse = 3 // 回应
-
 type Message interface {
 	Write(conn net.Conn) error
 	Read(conn net.Conn) error

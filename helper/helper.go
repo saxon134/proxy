@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/md5"
 	"fmt"
+	"io"
 	"net"
+	"strings"
 	"time"
 )
 
@@ -40,29 +42,32 @@ func CreateConnect(connectAddr string) (*net.TCPConn, error) {
 
 // KeepAlive 保持连接,参数为连接conn，通过循环向连接中写入数据，保持连接,每隔3秒写入一次,如果写入失败，说明连接已经断开，退出循环
 func KeepAlive(conn *net.TCPConn) {
-	// 开启keepalive
-	conn.SetKeepAlive(true)
-
-	// 设置keepalive时间间隔
-	var keepAliveTime = time.Duration(30) * time.Second
-	var err = conn.SetKeepAlivePeriod(keepAliveTime)
-	if err != nil {
-		return
-	}
-
-	// 设置keepalive探测次数和超时时间
-	err = conn.SetKeepAlivePeriod(15 * time.Second)
-	if err != nil {
-		return
-	}
+	//// 开启keepalive
+	//conn.SetKeepAlive(true)
+	//
+	//// 设置keepalive时间间隔
+	//var keepAliveTime = time.Duration(30) * time.Second
+	//var err = conn.SetKeepAlivePeriod(keepAliveTime)
+	//if err != nil {
+	//	return
+	//}
+	//
+	//// 设置keepalive探测次数和超时时间
+	//err = conn.SetKeepAlivePeriod(15 * time.Second)
+	//if err != nil {
+	//	return
+	//}
 
 	//for {
 	//	_, err := conn.Write([]byte("KeepAlive"))
 	//	if err != nil {
-	//		log.Printf("[KeepAlive] Error %s", err)
+	//		var msg = err.Error()
+	//		if strings.Contains(msg, "broken pipe") || strings.Contains(msg, "EOF") {
+	//			log.Printf("[-] Client broked")
+	//		}
 	//		return
 	//	}
-	//	time.Sleep(time.Second * 3)
+	//	time.Sleep(time.Second * 5)
 	//}
 }
 
@@ -76,6 +81,7 @@ func GetDataFromConnection(bufSize int, conn *net.TCPConn) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+
 		b = append(b, data[:n]...)
 		if n < bufSize {
 			break
@@ -157,8 +163,25 @@ func MD5(s string) [16]byte {
 	return has
 }
 
-//func MD5(s string) string {
-//	var data = []byte(s)
-//	var has = md5.Sum(data)
-//	return fmt.Sprintf("%x", has)
-//}
+func Read(conn *net.TCPConn) ([]byte, error) {
+	var data = make([]byte, 1024)
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second * 5))
+	var _, err = conn.Read(data)
+	if isErr(err) {
+		return nil, err
+	}
+	return data, nil
+}
+
+func Write(conn *net.TCPConn, data []byte) error {
+	_ = conn.SetWriteDeadline(time.Now().Add(time.Second * 5))
+	var _, err = conn.Write(data)
+	return err
+}
+
+func isErr(err error) bool {
+	if err != nil && err != io.EOF && strings.Contains(err.Error(), "i/o timeout") == false {
+		return true
+	}
+	return false
+}
