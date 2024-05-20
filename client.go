@@ -30,7 +30,7 @@ func Init(cfg Config) {
 
 	// 参数校验
 	if cfg.Secret == "" || strings.Contains(cfg.RemoteHost, " ") {
-		panic("Proxy config err")
+		panic("[Proxy] config err")
 	}
 
 	//开启
@@ -45,9 +45,10 @@ func start(cfg Config) {
 	// 连接服务端
 	var servConn, err = helper.CreateConnect(cfg.PoolAddr)
 	if err != nil {
-		fmt.Println("Proxy Connect err, ", err)
+		fmt.Println("[Proxy] Connect err, ", err)
 		return
 	}
+	servConn.SetKeepAlive(true)
 
 	// 发送消息
 	var timestamp = helper.MD5(fmt.Sprintf("%d", time.Now().Unix()))
@@ -58,7 +59,7 @@ func start(cfg Config) {
 	}.Write(servConn)
 
 	// 已连接
-	fmt.Println("Proxy Connected")
+	fmt.Println("[Proxy] Connected")
 
 	// 数据转发
 	for {
@@ -67,7 +68,7 @@ func start(cfg Config) {
 		data, err = helper.Read(servConn)
 		if err != nil {
 			servConn.Close()
-			fmt.Println("Proxy Disconnected, retry...")
+			fmt.Println("[Proxy] Disconnected, retry...")
 			return
 		}
 
@@ -79,7 +80,7 @@ func start(cfg Config) {
 		//连接本地app
 		var appConn = connectApp(cfg.LocalAddr)
 		if appConn == nil {
-			err = helper.Write(servConn, []byte("Proxy Connect local app err."))
+			err = helper.Write(servConn, []byte("[Proxy] Connect local app err."))
 			if err != nil {
 				return
 			}
@@ -89,7 +90,7 @@ func start(cfg Config) {
 		//往本地app写数据
 		err = helper.Write(appConn, data)
 		if err != nil {
-			var msg = fmt.Sprintf("Proxy Write local app err.\n%s", err.Error())
+			var msg = fmt.Sprintf("[Proxy] Write local app err.\n%s", err.Error())
 			err = helper.Write(servConn, []byte(msg))
 			if err != nil {
 				return
@@ -100,7 +101,7 @@ func start(cfg Config) {
 		//从本地读数据
 		data, err = helper.Read(appConn)
 		if err != nil {
-			var msg = fmt.Sprintf("Proxy Read local app err.\n%s", err.Error())
+			var msg = fmt.Sprintf("[Proxy] Read local app err.\n%s", err.Error())
 			err = helper.Write(servConn, []byte(msg))
 			if err != nil {
 				return
@@ -116,7 +117,7 @@ func start(cfg Config) {
 		//回复远程server数据
 		err = helper.Write(servConn, data)
 		if err != nil {
-			fmt.Println("Proxy Write remote server err.\n", err)
+			fmt.Println("[Proxy] Write remote server err.\n", err)
 			return
 		}
 	}

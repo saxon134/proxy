@@ -32,11 +32,10 @@ func main() {
 	//	LocalAddr:  "127.0.0.1:10311",
 	//	Secret:     "x7&6rty",
 	//})
-	go proxy.Init(proxy.Config{
+	proxy.Init(proxy.Config{
 		PoolAddr:   "172.16.0.230:7005",
 		RemoteHost: "sh02.frp.wcuiqyu.cn",
 		LocalAddr:  "127.0.0.1:10311",
 		Secret:     "x7&6rty82ux",
 	})
-
 }

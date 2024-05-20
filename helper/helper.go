@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/md5"
 	"fmt"
-	"io"
 	"net"
 	"strings"
 	"time"
@@ -42,9 +41,9 @@ func CreateConnect(connectAddr string) (*net.TCPConn, error) {
 
 // KeepAlive 保持连接,参数为连接conn，通过循环向连接中写入数据，保持连接,每隔3秒写入一次,如果写入失败，说明连接已经断开，退出循环
 func KeepAlive(conn *net.TCPConn) {
-	//// 开启keepalive
-	//conn.SetKeepAlive(true)
-	//
+	// 开启keepalive
+	conn.SetKeepAlive(true)
+
 	//// 设置keepalive时间间隔
 	//var keepAliveTime = time.Duration(30) * time.Second
 	//var err = conn.SetKeepAlivePeriod(keepAliveTime)
@@ -167,10 +166,13 @@ func Read(conn *net.TCPConn) ([]byte, error) {
 	var data = make([]byte, 1024)
 	_ = conn.SetReadDeadline(time.Now().Add(time.Second * 5))
 	var _, err = conn.Read(data)
-	if isErr(err) {
-		return nil, err
+	//特定err，等待一会儿再读数据
+	if err != nil {
+		if isReadErr(err) == false {
+			return nil, nil
+		}
 	}
-	return data, nil
+	return data, err
 }
 
 func Write(conn *net.TCPConn, data []byte) error {
@@ -179,9 +181,14 @@ func Write(conn *net.TCPConn, data []byte) error {
 	return err
 }
 
-func isErr(err error) bool {
-	if err != nil && err != io.EOF && strings.Contains(err.Error(), "i/o timeout") == false {
-		return true
+func isReadErr(err error) bool {
+	if err == nil {
+		return false
 	}
-	return false
+
+	var msg = err.Error()
+	if strings.HasSuffix(msg, "i/o timeout") {
+		return false
+	}
+	return true
 }
